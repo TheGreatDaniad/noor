@@ -1,0 +1,3 @@
+max_sessions: 100
+max_same_user_sessions: 4
+port: 56000
