@@ -4,7 +4,6 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"log"
 	"net"
 )
@@ -75,25 +74,24 @@ func handleHandshakeTCPClient(c net.Conn, userID [2]byte, mode uint8, password s
 
 }
 func simpleHandshakeClient(c net.Conn, password string) ([]byte, error) {
-	challenge := make([]byte, 16)
+	challenge := make([]byte, 32)
 	b, err := c.Read(challenge)
-	if err != nil || b != 16 {
+	if err != nil || b != 32 {
 		return []byte{}, errors.New("error on reading server's challenge")
 	}
 	hash := HashSha256(password)
 
-	encryptedChallenge, err := encrypt(hash[:32], string(challenge))
+	encryptedChallenge, err := encrypt([]byte(hash[:32]), challenge)
 
 	if err != nil {
 		return []byte{}, errors.New("error on encrypting the challenge")
 	}
-	fmt.Println(encryptedChallenge)
 	c.Write([]byte(encryptedChallenge))
 
-	publicKeyServerBytes := make([]byte, 16)
+	publicKeyServerBytes := make([]byte, 256)
 
 	b, err = c.Read(publicKeyServerBytes)
-	if err != nil || b != 16 {
+	if err != nil {
 		return []byte{}, errors.New("error on reading server's response")
 	}
 	curve := ecdh.P256()
@@ -102,31 +100,39 @@ func simpleHandshakeClient(c net.Conn, password string) ([]byte, error) {
 		return []byte{}, err
 	}
 	publicKey := privateKey.PublicKey()
+	publicKeyClient, err := curve.NewPublicKey(publicKeyServerBytes[:b])
+	if err != nil {
+		return []byte{}, err
+	}
+
+	sharedKey, err := privateKey.ECDH(publicKeyClient)
+	if err != nil {
+		return []byte{}, err
+	}
 
 	c.Write(publicKey.Bytes())
 
-	return publicKeyServerBytes, nil
+	return sharedKey, nil
 }
 
 func simpleHandshakeServer(server Server, u User, c net.Conn) error {
 	challenge := generateRandom128BitString()
-	hash := HashSha256(challenge)
+	hash := u.Password
 
 	c.Write([]byte(challenge))
 	challengeResponse := make([]byte, 200)
-	_, err := c.Read([]byte(challengeResponse))
+	n, err := c.Read([]byte(challengeResponse))
 
 	if err != nil {
 		return errors.New("error on reading client's response")
 
 	}
-	rawResponse, err := decrypt([]byte(hash[:32]), challengeResponse)
-	fmt.Println(rawResponse)
+	rawResponse, err := decrypt([]byte(hash[:32]), challengeResponse[:n])
 	if err != nil {
-		errors.New("error on decrypting the challenge response")
+		return errors.New("error on decrypting the challenge response")
 	}
-	if challenge != rawResponse {
-		errors.New("authentication failed, the response is wrong.")
+	if challenge != string(rawResponse) {
+		return errors.New("authentication failed, the response is wrong")
 
 	}
 	curve := ecdh.P256()
@@ -136,14 +142,14 @@ func simpleHandshakeServer(server Server, u User, c net.Conn) error {
 	}
 	publicKey := privateKey.PublicKey()
 	c.Write(publicKey.Bytes())
-	publicKeyClientBytes := make([]byte, 32)
+	publicKeyClientBytes := make([]byte, 256)
+
 	b, err := c.Read(publicKeyClientBytes)
-	fmt.Println(publicKeyClientBytes)
-	if err != nil || b != 32 {
+	if err != nil {
 		return errors.New("error on reading client's response")
 	}
 
-	publicKeyClient, err := curve.NewPublicKey(publicKeyClientBytes)
+	publicKeyClient, err := curve.NewPublicKey(publicKeyClientBytes[:b])
 	if err != nil {
 		return err
 	}
@@ -152,7 +158,6 @@ func simpleHandshakeServer(server Server, u User, c net.Conn) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(sharedKey, "shared")
 	err = addSession(c, server, u.UserID, sharedKey)
 	if err != nil {
 		return err
