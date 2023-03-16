@@ -37,6 +37,7 @@ func runServer() {
 	var server Server = Server{
 		Config:         config,
 		SessionCounter: 0,
+		Sessions:       make(Sessions),
 	}
 	// Accept incoming connections and handle them
 	for {
@@ -108,6 +109,7 @@ func addSession(c net.Conn, server Server, userID uint16, sharedKey []byte) erro
 		Conn:      &c,
 		SharedKey: sharedKey,
 	}
+	server.SessionCounter += 1;
 	return nil
 }
 
