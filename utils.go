@@ -2,8 +2,10 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"math/big"
+	"net"
 )
 
 func generateRandom128BitString() string {
@@ -32,4 +34,15 @@ func generateRandomPadding() []byte {
 		panic(err)
 	}
 	return randomBytes
+}
+
+func ipToUint32(ip net.IP) uint32 {
+	return binary.BigEndian.Uint32(ip.To4())
+}
+
+// Convert a uint32 value to an IP address
+func uint32ToIP(ipVal uint32) net.IP {
+	ip := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ip, ipVal)
+	return ip
 }

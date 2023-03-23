@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"syscall"
 )
 
 const (
@@ -44,6 +45,21 @@ func handleHandshakeTCPServer(data []byte, c net.Conn, server Server) error {
 		err := serverHandshakeHandlers[handshakeByte](server, u, c)
 		if err != nil {
 			return err
+		}
+		buf := make([]byte, 1500)
+		fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
+		if err != nil {
+			panic(err)
+		}
+		defer syscall.Close(fd)
+
+		for {
+			n, _ := c.Read(buf)
+			pckt, err := changePacketSrc(buf[:n], server.Config.ServerIP)
+			if err != nil {
+				continue
+			}
+			sendPacketsToInternet(pckt, fd)
 		}
 
 	} else {

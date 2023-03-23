@@ -7,9 +7,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/spf13/viper"
+	"golang.org/x/net/ipv4"
 	"gopkg.in/yaml.v2"
 )
 
@@ -17,11 +20,14 @@ type Config struct {
 	MaxSessions         uint32 `yaml:"max_sessions"`
 	MaxSameUserSessions uint8  `yaml:"max_same_user_sessions"`
 	Port                uint16 `yaml:"port"`
+	BaseClientIP        net.IP `yaml:"base_client_ip"`
+	ServerIP            net.IP `yaml:"server_ip"`
 }
 type Server struct {
 	Config         Config
 	Sessions       Sessions
-	SessionCounter uint32
+	SessionCounter uint16
+	IPCounter      uint16
 }
 
 func runServer() {
@@ -39,6 +45,7 @@ func runServer() {
 		SessionCounter: 0,
 		Sessions:       make(Sessions),
 	}
+
 	// Accept incoming connections and handle them
 	for {
 		conn, err := listener.Accept()
@@ -74,6 +81,7 @@ func readConfig() Config {
 		MaxSessions:         1024,
 		MaxSameUserSessions: 6,
 		Port:                56000,
+		BaseClientIP:        net.IPv4(10, 0, 10, 1),
 	}
 	// maybe in future use /etc for configs
 	// viper.AddConfigPath("/etc/noor")
@@ -91,7 +99,14 @@ func readConfig() Config {
 		fmt.Printf("Error unmarshaling config file: %s\n", err)
 		panic(err)
 	}
-
+	if config.ServerIP.Equal(nil) {
+		ip, err := findGlobalIP()
+		if err != nil {
+			panic(err)
+		}
+		config.ServerIP = ip
+	}
+	fmt.Println(config)
 	return config
 }
 
@@ -109,7 +124,7 @@ func addSession(c net.Conn, server Server, userID uint16, sharedKey []byte) erro
 		Conn:      &c,
 		SharedKey: sharedKey,
 	}
-	server.SessionCounter += 1;
+	server.SessionCounter += 1
 	return nil
 }
 
@@ -162,6 +177,7 @@ func setupServer() {
 		fmt.Println("Error writing configuration to file")
 		return
 	}
+
 	err = os.WriteFile(CONFIG_FILE_PATH, data, 0644)
 	if err != nil {
 		fmt.Println("Error writing configuration to file")
@@ -169,4 +185,68 @@ func setupServer() {
 	}
 
 	fmt.Println("Server configuration written to config.yaml")
+}
+
+func sendPacketsToInternet(packet []byte, socket int) {
+	
+	ipHeader, err := ipv4.ParseHeader(packet)
+	if err != nil {
+		fmt.Println("Failed to parse packet:", err)
+		return
+	}
+	var dst [4]byte
+	copy(dst[:], ipHeader.Dst.To4())
+	sockaddr := syscall.SockaddrInet4{
+		Port: 0,
+		Addr: dst,
+	}
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_WRITE,
+		uintptr(socket),
+		uintptr(unsafe.Pointer(&packet[0])),
+		uintptr(len(packet)),
+		uintptr(0),
+		uintptr(unsafe.Pointer(&sockaddr)),
+		uintptr(unsafe.Sizeof(sockaddr)),
+	)
+	fmt.Println("sent to the internet: ", ipHeader)
+	println(errno)
+}
+
+func findGlobalIP() (net.IP, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		panic(err)
+	}
+
+	// Iterate over interfaces
+	for _, iface := range ifaces {
+		// Check if interface is up and not a loopback or tunnel interface
+		if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 && iface.Flags&net.FlagPointToPoint == 0 {
+			// Get list of addresses for interface
+			addrs, err := iface.Addrs()
+			if err != nil {
+				panic(err)
+			}
+
+			// Iterate over addresses
+			for _, addr := range addrs {
+				// Check if address is an IPv4 or IPv6 global unicast address
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip != nil && !ip.IsLoopback() && ip.To4() != nil && ip.IsGlobalUnicast() {
+					fmt.Println("Global IP address:", ip)
+					return ip, nil
+				}
+			}
+		}
+	}
+
+	return net.IP{}, nil
+
 }

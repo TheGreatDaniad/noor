@@ -6,12 +6,8 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
-
-	"github.com/songgao/water"
 )
 
 func runClient(host string, port string, userIDStr string, password string) {
@@ -64,7 +60,7 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 		return
 	}
 
-	ifce, err := createTunnelInterface()
+	ifce, err := createTunnelInterfaceClient()
 	if err != nil {
 
 		log.Panicln(err)
@@ -84,63 +80,4 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 		}
 	}
 
-}
-func createTunnelInterface() (*water.Interface, error) {
-	ifce, err := water.New(water.Config{
-		DeviceType: water.TUN,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	switch runtime.GOOS {
-	case "linux":
-		cmd := exec.Command("sudo", "ip", "addr", "add", "10.0.0.1/24", "dev", ifce.Name())
-		err = cmd.Run()
-		if err != nil {
-			log.Fatalf("Failed to configure tun interface: %v", err)
-			return nil, err
-		}
-
-		cmd = exec.Command("sudo", "sysctl", "-w", "net.ipv4.ip_forward=1")
-		err = cmd.Run()
-		if err != nil {
-			log.Fatalf("Failed to enable IP forwarding: %v", err)
-			return nil, err
-		}
-		cmd = exec.Command("ip", "route", "add", "default", "dev", ifce.Name())
-		err := cmd.Run()
-		if err != nil {
-			return nil, err
-		}
-	case "darwin":
-		// ch := make(chan int)
-		// <-ch
-		// Configure the interface with an IP address and netmask
-		cmd := exec.Command("sudo", "ifconfig", ifce.Name(), "inet", "10.0.10.1", "10.0.10.1", "netmask", "255.255.255.0")
-		err = cmd.Run()
-		if err != nil {
-			log.Fatal(err)
-			return nil, err
-		}
-
-		cmd = exec.Command("sudo", "sysctl", "-w", "net.inet.ip.forwarding=1")
-		err = cmd.Run()
-		if err != nil {
-			log.Fatal(err)
-			return nil, err
-		}
-
-		cmd = exec.Command("sudo", "route", "-n", "add", "-net", "default", "-interface", "utun0")
-		err = cmd.Run()
-		if err != nil {
-			log.Fatal(err)
-			return nil, err
-		}
-		return ifce, nil
-	case "windows":
-		return nil, nil
-	default:
-		return nil, fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
-	}
-	return ifce, nil
 }

@@ -47,7 +47,10 @@ package main
 import (
 	"encoding/binary"
 	"math/rand"
+	"net"
 	"time"
+
+	"golang.org/x/net/ipv4"
 )
 
 func generateModeByte(private bool, handshake bool, extended bool) byte {
@@ -111,4 +114,19 @@ func UnmarshalPacket(p []byte) Packet {
 		packet.Handshake = true
 	}
 	return packet
+}
+
+func changePacketSrc(packet []byte, src net.IP) ([]byte, error) {
+	ipHeader, err := ipv4.ParseHeader(packet)
+	if err != nil {
+		return []byte{}, err
+	}
+	ipHeader.Src = src
+	payload := packet[ipHeader.Len:]
+	newHeader, err := ipHeader.Marshal()
+	if err != nil {
+		return []byte{}, err
+	}
+	return append(newHeader, payload...), nil
+
 }
