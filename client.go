@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/ipv4"
 )
 
 func runClient(host string, port string, userIDStr string, password string) {
@@ -59,16 +61,31 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 		conn.Close()
 		return
 	}
-
+	fmt.Println("handshake successful")
+	//sudo route delete -host 10.0.10.2 -iface lo0
+	//sudo route delete default -interface utun3
 	ifce, err := createTunnelInterfaceClient()
 	if err != nil {
-
 		log.Panicln(err)
 	}
-
+	fmt.Println(ifce.Name())
 	packetBuf := make([]byte, 1500)
+	// packet := CreatePingPacket(1234, 1)
+	// _, err = conn.Write(packet[:])
+	// for {
+	// }
 	for {
 		n, err := ifce.Read(packetBuf)
+		fmt.Println(packetBuf)
+		ipHeader, err := ipv4.ParseHeader(packetBuf)
+		if err != nil {
+			fmt.Println(err)
+		}
+		fmt.Printf("%+v", ipHeader)
+		if err != nil {
+			fmt.Println("Failed to parse IP header:", err)
+			return
+		}
 		if err != nil {
 			fmt.Println("Error reading from tunnel interface:", err)
 			return
@@ -80,4 +97,67 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 		}
 	}
 
+}
+
+// CreatePingPacket creates an ICMP ping packet with a given identifier and sequence number
+func CreatePingPacket(identifier, sequenceNum uint16) []byte {
+	// Create the ICMP echo request packet
+	icmpPacket := make([]byte, 8)
+
+	icmpPacket[0] = 8 // Type icmp
+	icmpPacket[1] = 0 // Code
+	icmpPacket[2] = 0 // Checksum (zeroed for now)
+	icmpPacket[3] = 0
+	icmpPacket[4] = byte(identifier >> 8)    // Identifier (high byte)
+	icmpPacket[5] = byte(identifier & 0xff)  // Identifier (low byte)
+	icmpPacket[6] = byte(sequenceNum >> 8)   // Sequence number (high byte)
+	icmpPacket[7] = byte(sequenceNum & 0xff) // Sequence number (low byte)
+
+	checksum := calculateChecksum(icmpPacket)
+	icmpPacket[2] = byte(checksum >> 8)   // Set the checksum (high byte)
+	icmpPacket[3] = byte(checksum & 0xff) // Set the checksum (low byte)
+
+	// Create the IP packet
+	ipPacket := make([]byte, 20+len(icmpPacket))
+
+	ipPacket[0] = 0x45                       // Version and Header Length
+	ipPacket[1] = 0                          // TOS
+	ipPacket[2] = byte(len(ipPacket) >> 8)   // Total Length (high byte)
+	ipPacket[3] = byte(len(ipPacket) & 0xff) // Total Length (low byte)
+	ipPacket[4] = 0                          // Identification (high byte)
+	ipPacket[5] = 0                          // Identification (low byte)
+	ipPacket[6] = 0x40                       // Flags and Fragment Offset
+	ipPacket[7] = 0                          // Fragment Offset
+	ipPacket[8] = 64                         // TTL (Time to Live)
+	ipPacket[9] = 1                          // Protocol (ICMP)
+	ipPacket[10] = 0                         // Checksum (high byte)
+	ipPacket[11] = 0                         // Checksum (low byte)
+	ipPacket[12] = 0                         // Source IP address (zeroed for now)
+	ipPacket[13] = 0
+	ipPacket[14] = 0
+	ipPacket[15] = 0
+	ipPacket[16] = 4 // Destination IP address (4.2.2.4)
+	ipPacket[17] = 2
+	ipPacket[18] = 2
+	ipPacket[19] = 4
+
+	copy(ipPacket[20:], icmpPacket)
+
+	return ipPacket
+}
+func calculateChecksum(data []byte) uint16 {
+	var sum uint32
+
+	for i := 0; i < len(data)-1; i += 2 {
+		sum += uint32(data[i+1])<<8 | uint32(data[i])
+	}
+
+	if len(data)%2 != 0 {
+		sum += uint32(data[len(data)-1])
+	}
+
+	sum = (sum >> 16) + (sum & 0xffff)
+	sum += sum >> 16
+
+	return uint16(^sum)
 }

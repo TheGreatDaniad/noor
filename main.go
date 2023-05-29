@@ -16,8 +16,8 @@ var (
 func init() {
 	flag.StringVar(&modeFlag, "mode", "", "Select mode (server, client, user)")
 	flag.StringVar(&modeFlag, "m", "", "Select mode (server, client, user)")
-	flag.IntVar(&portFlag, "port", 0, "Port to use")
-	flag.IntVar(&portFlag, "P", 0, "Port to use")
+	flag.IntVar(&portFlag, "port", 56000, "Port to use")
+	flag.IntVar(&portFlag, "P", 56000, "Port to use")
 	flag.StringVar(&userFlag, "user", "", "Username to use")
 	flag.StringVar(&userFlag, "u", "", "Username to use")
 	flag.StringVar(&hostFlag, "host", "", "Host to connect to")
@@ -34,7 +34,7 @@ func main() {
 	case "server", "s":
 		runServer()
 	case "client", "c":
-		runClient(hostFlag, fmt.Sprintf("%v", portFlag), userFlag, passwdFlag)
+		runClient(hostFlag, fmt.Sprintf("%v", portFlag), userFlag, passwdFlag) //TODO fix flag here
 	case "user", "m":
 		RunUserManager()
 	default:

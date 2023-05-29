@@ -34,7 +34,7 @@ func createTunnelInterfaceClient() (*water.Interface, error) {
 	}
 	switch runtime.GOOS {
 	case "linux":
-		cmd := exec.Command("sudo", "ip", "addr", "add", "10.0.0.1/24", "dev", ifce.Name())
+		cmd := exec.Command("sudo", "ip", "addr", "add", "10.0.0.10/24", "dev", ifce.Name())
 		err = cmd.Run()
 		if err != nil {
 			log.Fatalf("Failed to configure tun interface: %v", err)
@@ -55,7 +55,7 @@ func createTunnelInterfaceClient() (*water.Interface, error) {
 	case "darwin":
 
 		// Configure the interface with an IP address and netmask
-		cmd := exec.Command("sudo", "ifconfig", ifce.Name(), "inet", "10.0.10.1", "10.0.10.1", "netmask", "255.255.255.0")
+		cmd := exec.Command("sudo", "ifconfig", ifce.Name(), "inet", "10.0.10.10", "10.0.10.1", "netmask", "255.255.255.0")
 		err = cmd.Run()
 		if err != nil {
 			log.Fatal(err)
@@ -69,23 +69,23 @@ func createTunnelInterfaceClient() (*water.Interface, error) {
 			return nil, err
 		}
 
-		cmd = exec.Command("sudo", "route", "-n", "add", "-net", "0/1", "10.0.10.1")
-		err = cmd.Run()
-		if err != nil {
-			log.Fatal(err)
-			return nil, err
-		}
-		physicalInterface, err := findPhysicalInterface()
-		if err != nil {
-			log.Fatal(err)
-			return nil, err
-		}
-		cmd = exec.Command("sudo", "route", "-n", "add", "-net", "10.0.10.1", "-interface", physicalInterface.Name)
-		err = cmd.Run()
-		if err != nil {
-			log.Fatal(err)
-			return nil, err
-		}
+		// cmd = exec.Command("sudo", "route", "-n", "add", "-net", "0/1", "10.0.10.2")
+		// err = cmd.Run()
+		// if err != nil {
+		// 	log.Fatal(err)
+		// 	return nil, err
+		// }
+		// physicalInterface, err := findPhysicalInterface()
+		// if err != nil {
+		// 	log.Fatal(err)
+		// 	return nil, err
+		// }
+		// cmd = exec.Command("sudo", "route", "-n", "add", "-net", "10.0.10.2", "-interface", physicalInterface.Name)
+		// err = cmd.Run()
+		// if err != nil {
+		// 	log.Fatal(err)
+		// 	return nil, err
+		// }
 
 		return ifce, nil
 	case "windows":
@@ -99,14 +99,31 @@ func createTunnelInterfaceServer() (*water.Interface, error) {
 	ifce, err := water.New(water.Config{
 		DeviceType: water.TUN,
 	})
+
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	cmd := exec.Command("sudo", "ip", "addr", "add", "10.0.10.1/24", "dev", ifce.Name())
 	err = cmd.Run()
 	if err != nil {
 		log.Fatalf("Failed to configure network interface: %v", err)
 		return nil, err
 	}
-	return nil, nil
+	cmd = exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE")
+	err = cmd.Run()
+	if err != nil {
+		log.Fatalf("Failed to set up NAT rule: %v", err)
+	}
+	cmd = exec.Command("iptables", "-A", "FORWARD", "-i", "eth0", "-o", "tun0", "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
+	err = cmd.Run()
+	if err != nil {
+		fmt.Printf("Failed to execute command: %s", err)
+	}
+	cmd = exec.Command("iptables", "-A", "FORWARD", "-i", "tun0", "-o", "eth0", "-j", "ACCEPT")
+	err = cmd.Run()
+	if err != nil {
+		log.Fatalf("Failed to set up NAT rule: %v", err)
+	}
+	return ifce, nil
 }

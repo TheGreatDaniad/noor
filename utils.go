@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"math/big"
 	"net"
 )
@@ -45,4 +46,25 @@ func uint32ToIP(ipVal uint32) net.IP {
 	ip := make(net.IP, 4)
 	binary.BigEndian.PutUint32(ip, ipVal)
 	return ip
+}
+
+func AddToIP(ipStr string, addition uint32) (net.IP, error) {
+	// Parse the IP
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP address: %s", ipStr)
+	}
+
+	// Convert the IP to a uint32
+	ip = ip.To4()
+	ipInt := binary.BigEndian.Uint32(ip)
+
+	// Add the numbers
+	newIPInt := ipInt + addition
+
+	// Convert the uint32 back to an IP address
+	newIP := make(net.IP, 4)
+	binary.BigEndian.PutUint32(newIP, newIPInt)
+
+	return newIP, nil
 }

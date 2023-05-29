@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/songgao/water"
 	"github.com/spf13/viper"
 	"golang.org/x/net/ipv4"
 	"gopkg.in/yaml.v2"
@@ -24,26 +27,34 @@ type Config struct {
 	ServerIP            net.IP `yaml:"server_ip"`
 }
 type Server struct {
-	Config         Config
-	Sessions       Sessions
-	SessionCounter uint16
-	IPCounter      uint16
+	Config          Config
+	Sessions        Sessions
+	BaseLocalIP     net.IP
+	TunnelInterface *water.Interface
 }
 
 func runServer() {
 	config := readConfig()
-
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%v", config.Port))
+	ip, err := findGlobalIP()
+	if err != nil {
+		panic("cannot find phisical interface ip of the server")
+	}
+	listener, err := net.Listen("tcp", fmt.Sprintf("%v:%v", ip.To4().String(), config.Port))
 	if err != nil {
 		fmt.Println("Error listening:", err)
 		return
 	}
 	defer listener.Close()
 	fmt.Println("listening at port:", config.Port)
+	ifce, err := createTunnelInterfaceServer()
+	if err != nil {
+		panic(err)
+	}
 	var server Server = Server{
-		Config:         config,
-		SessionCounter: 0,
-		Sessions:       make(Sessions),
+		Config:          config,
+		Sessions:        make(Sessions),
+		TunnelInterface: ifce,
+		BaseLocalIP:     net.IPv4(10, 0, 10, 1),
 	}
 
 	// Accept incoming connections and handle them
@@ -68,12 +79,25 @@ func handleTCPConnection(conn net.Conn, server Server) {
 		return
 	}
 	data := buffer[:n]
-	err = handleHandshakeTCPServer(data, conn, server)
+	sessionID, err := handleHandshakeTCPServer(data, conn, server)
 	if err != nil {
 		conn.Close()
 		return
 	}
 
+	session := server.Sessions[sessionID]
+	conn.Write(session.LocalIp)
+	log.Printf("%v: Connection established with the following session info %+v ", time.Now(), session)
+	buf := make([]byte, 1500)
+
+	for {
+		n, _ := conn.Read(buf)
+		pkt, err := decrypt(session.SharedKey, buf[:n])
+		if err != nil {
+			continue
+		}
+		server.TunnelInterface.Write(pkt)
+	}
 }
 
 func readConfig() Config {
@@ -106,26 +130,30 @@ func readConfig() Config {
 		}
 		config.ServerIP = ip
 	}
-	fmt.Println(config)
 	return config
 }
 
-func addSession(c net.Conn, server Server, userID uint16, sharedKey []byte) error {
+func addSession(c net.Conn, server Server, userID uint16, sharedKey []byte) (uint16, error) {
 	remoteAddr := c.RemoteAddr()
 	ip, ok := remoteAddr.(*net.TCPAddr)
 	if !ok {
-		return fmt.Errorf("remote address is not a TCP address: %s", remoteAddr)
+		return 0, fmt.Errorf("remote address is not a TCP address: %s", remoteAddr)
 	}
-
-	server.Sessions[server.SessionCounter] = Session{
-		ID:        server.SessionCounter,
+	count := len(server.Sessions) + 1
+	localIP, err := AddToIP("10.0.10.1", uint32(count))
+	if err != nil {
+		return 0, err
+	}
+	server.Sessions[uint16(len(server.Sessions)+1)] = Session{
+		ID:        uint16(len(server.Sessions) + 1),
 		UserID:    userID,
 		RealIp:    ip.IP,
 		Conn:      &c,
 		SharedKey: sharedKey,
+		LocalIp:   localIP,
 	}
-	server.SessionCounter += 1
-	return nil
+
+	return uint16(len(server.Sessions)), nil
 }
 
 func setupServer() {
@@ -188,7 +216,7 @@ func setupServer() {
 }
 
 func sendPacketsToInternet(packet []byte, socket int) {
-	
+
 	ipHeader, err := ipv4.ParseHeader(packet)
 	if err != nil {
 		fmt.Println("Failed to parse packet:", err)
@@ -249,4 +277,34 @@ func findGlobalIP() (net.IP, error) {
 
 	return net.IP{}, nil
 
+}
+
+// handles the reponses from internet that comes to the tunnel interface of the server
+func handleServerIncomingResponses(server Server) {
+	buffer := make([]byte, 1500)
+
+	for {
+		n, err := server.TunnelInterface.Read(buffer)
+		if err != nil {
+			if err == io.EOF {
+				continue // Ignore EOF errors and keep reading
+			}
+			log.Print("Failed to read from TUN interface:", err)
+		}
+		packet := buffer[:n]
+		go routeServerIncomingResponses(server, packet)
+
+	}
+}
+
+func routeServerIncomingResponses(server Server, packet []byte) {
+	ipHeader, err := ipv4.ParseHeader(packet)
+	if err != nil {
+		return
+	}
+	subnet := net.IPNet{IP: net.ParseIP("10.0.10.0"), Mask: net.CIDRMask(24, 32)}
+	if subnet.Contains(ipHeader.Dst) {
+	} else {
+		return
+	}
 }

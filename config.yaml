@@ -1,3 +1,5 @@
-max_sessions: 100
-max_same_user_sessions: 4
+max_sessions: 10
+max_same_user_sessions: 2
 port: 56000
+base_client_ip: ""
+server_ip: ""

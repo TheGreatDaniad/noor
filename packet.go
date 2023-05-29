@@ -122,6 +122,7 @@ func changePacketSrc(packet []byte, src net.IP) ([]byte, error) {
 		return []byte{}, err
 	}
 	ipHeader.Src = src
+	
 	payload := packet[ipHeader.Len:]
 	newHeader, err := ipHeader.Marshal()
 	if err != nil {
