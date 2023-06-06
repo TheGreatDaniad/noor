@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"log"
 
 	"golang.org/x/crypto/sha3"
 )
@@ -44,6 +45,12 @@ func encrypt(key, plaintext []byte) ([]byte, error) {
 
 // Decrypt decrypts ciphertext using AES-256 in CBC mode.
 func decrypt(key, ciphertext []byte) ([]byte, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic: %v", r)
+			
+		}
+	}()
 	// Extract the IV from the ciphertext
 	if len(ciphertext) < aes.BlockSize {
 		return nil, errors.New("ciphertext too short")

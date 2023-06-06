@@ -4,7 +4,6 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"log"
 	"net"
 )
@@ -16,7 +15,7 @@ const (
 )
 
 type ServerHandshakeModes map[uint8]func(Server, User, net.Conn) (uint16, error)
-type ClientHandshakeModes map[uint8]func(net.Conn, string) ([]byte, error)
+type ClientHandshakeModes map[uint8]func(net.Conn, string) (net.IP, []byte, error)
 
 var serverHandshakeHandlers = ServerHandshakeModes{
 	0: simpleHandshakeServer,
@@ -44,14 +43,12 @@ func handleHandshakeTCPServer(data []byte, c net.Conn, server Server) (uint16, e
 
 		return serverHandshakeHandlers[handshakeByte](server, u, c)
 
-	
-
 	} else {
 		return 0, errors.New("invalid handshake byte")
 	}
 	return 0, errors.New("unknown error on handshake")
 }
-func handleHandshakeTCPClient(c net.Conn, userID [2]byte, mode uint8, password string) ([]byte, error) {
+func handleHandshakeTCPClient(c net.Conn, userID [2]byte, mode uint8, password string) (net.IP, []byte, error) {
 
 	if mode >= 0xc0 {
 		// TODO
@@ -61,56 +58,60 @@ func handleHandshakeTCPClient(c net.Conn, userID [2]byte, mode uint8, password s
 		packet := append(userID[:], mode)
 		packet = append(packet, generateRandomPadding()...) // add random padding to improve obfuscation
 		c.Write(packet)
-		key, err := clientHandshakeHandlers[mode](c, password)
-		fmt.Println(key)
+		ip, key, err := clientHandshakeHandlers[mode](c, password)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return key, nil
+		return ip, key, nil
 
 	} else {
-		return []byte{}, nil
+		return nil, []byte{}, nil
 	}
-	return []byte{}, errors.New("unknown error")
+	return nil, []byte{}, errors.New("unknown error")
 
 }
-func simpleHandshakeClient(c net.Conn, password string) ([]byte, error) {
+func simpleHandshakeClient(c net.Conn, password string) (net.IP, []byte, error) {
 	challenge := make([]byte, 32)
 	b, err := c.Read(challenge)
 	if err != nil || b != 32 {
-		return []byte{}, errors.New("error on reading server's challenge")
+		return nil, []byte{}, errors.New("error on reading server's challenge")
 	}
 	hash := HashSha256(password)
 	encryptedChallenge, err := encrypt([]byte(hash[:32]), challenge)
 
 	if err != nil {
-		return []byte{}, errors.New("error on encrypting the challenge")
+		return nil, []byte{}, errors.New("error on encrypting the challenge")
 	}
 	c.Write([]byte(encryptedChallenge))
 	publicKeyServerBytes := make([]byte, 256)
 
 	b, err = c.Read(publicKeyServerBytes)
 	if err != nil {
-		return []byte{}, errors.New("error on reading server's response")
+		return nil, []byte{}, errors.New("error on reading server's response")
 	}
 	curve := ecdh.P256()
 	privateKey, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
-		return []byte{}, err
+		return nil, []byte{}, err
 	}
 	publicKey := privateKey.PublicKey()
 
 	publicKeyClient, err := curve.NewPublicKey(publicKeyServerBytes[:b])
 	if err != nil {
-		return []byte{}, err
+		return nil, []byte{}, err
 	}
 	c.Write([]byte(publicKey.Bytes()))
 	sharedKey, err := privateKey.ECDH(publicKeyClient)
 	if err != nil {
-		return []byte{}, err
+		return nil, []byte{}, err
 	}
+	ip := make([]byte, 4)
 
-	return sharedKey, nil
+	b, err = c.Read(ip)
+	if err != nil {
+		return nil, []byte{}, errors.New("error on reading server's response")
+	}
+	return net.IP(ip), sharedKey, nil
 }
 
 func simpleHandshakeServer(server Server, u User, c net.Conn) (uint16, error) {

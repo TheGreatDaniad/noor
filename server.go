@@ -56,9 +56,10 @@ func runServer() {
 		TunnelInterface: ifce,
 		BaseLocalIP:     net.IPv4(10, 0, 10, 1),
 	}
-
+	go handleServerIncomingResponses(server)
 	// Accept incoming connections and handle them
 	for {
+
 		conn, err := listener.Accept()
 		conn.SetReadDeadline(time.Now().Add(30 * time.Second)) // set default timeout to 30 seconds
 		if err != nil {
@@ -93,6 +94,7 @@ func handleTCPConnection(conn net.Conn, server Server) {
 	for {
 		n, _ := conn.Read(buf)
 		pkt, err := decrypt(session.SharedKey, buf[:n])
+
 		if err != nil {
 			continue
 		}
@@ -285,6 +287,7 @@ func handleServerIncomingResponses(server Server) {
 
 	for {
 		n, err := server.TunnelInterface.Read(buffer)
+		fmt.Println(buffer[:n])
 		if err != nil {
 			if err == io.EOF {
 				continue // Ignore EOF errors and keep reading
@@ -298,10 +301,12 @@ func handleServerIncomingResponses(server Server) {
 }
 
 func routeServerIncomingResponses(server Server, packet []byte) {
+
 	ipHeader, err := ipv4.ParseHeader(packet)
 	if err != nil {
 		return
 	}
+	fmt.Printf("%+v", ipHeader)
 	subnet := net.IPNet{IP: net.ParseIP("10.0.10.0"), Mask: net.CIDRMask(24, 32)}
 	if subnet.Contains(ipHeader.Dst) {
 	} else {

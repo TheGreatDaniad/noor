@@ -3,6 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 var (
@@ -27,6 +31,16 @@ func init() {
 }
 
 func main() {
+
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
+
+	go func() {
+		sig := <-signalCh
+		log.Printf("Received signal: %v", sig)
+		cleanup(CleanUpFunctions)
+		os.Exit(0)
+	}()
 	flag.Parse()
 
 	// Determine which function to run based on mode flag

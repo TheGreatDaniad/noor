@@ -8,11 +8,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"golang.org/x/net/ipv4"
 )
 
+var CleanUpFunctions CleanUpFuncs
+
 func runClient(host string, port string, userIDStr string, password string) {
+
 	reader := bufio.NewReader(os.Stdin)
 	if host == "" {
 		fmt.Print("Enter server address: ")
@@ -55,42 +56,29 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 	}
 
 	handshakeMode := uint8(0x00) // hardcoded for now but later make it more sophisticated
-	_, err = handleHandshakeTCPClient(conn, userID, handshakeMode, password)
+	ip, key, err := handleHandshakeTCPClient(conn, userID, handshakeMode, password)
 	if err != nil {
 		log.Println("handshake failed", err)
 		conn.Close()
 		return
 	}
-	fmt.Println("handshake successful")
 	//sudo route delete -host 10.0.10.2 -iface lo0
 	//sudo route delete default -interface utun3
-	ifce, err := createTunnelInterfaceClient()
+	ifce, err := createTunnelInterfaceClient(ip)
 	if err != nil {
 		log.Panicln(err)
 	}
-	fmt.Println(ifce.Name())
 	packetBuf := make([]byte, 1500)
-	// packet := CreatePingPacket(1234, 1)
-	// _, err = conn.Write(packet[:])
-	// for {
-	// }
+
 	for {
 		n, err := ifce.Read(packetBuf)
-		fmt.Println(packetBuf)
-		ipHeader, err := ipv4.ParseHeader(packetBuf)
+		encrypted, err := encrypt(key, packetBuf[:n])
 		if err != nil {
-			fmt.Println(err)
-		}
-		fmt.Printf("%+v", ipHeader)
-		if err != nil {
-			fmt.Println("Failed to parse IP header:", err)
+			fmt.Println("Failed to encrypt the packet:", err)
 			return
 		}
-		if err != nil {
-			fmt.Println("Error reading from tunnel interface:", err)
-			return
-		}
-		_, err = conn.Write(packetBuf[:n])
+
+		_, err = conn.Write(encrypted)
 		if err != nil {
 			fmt.Println("Error sending packet to server:", err)
 			return
@@ -161,3 +149,11 @@ func calculateChecksum(data []byte) uint16 {
 
 	return uint16(^sum)
 }
+
+func cleanup(fns CleanUpFuncs) {
+	for _, fn := range fns {
+		fn()
+	}
+}
+
+type CleanUpFuncs []func()

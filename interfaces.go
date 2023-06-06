@@ -8,8 +8,14 @@ import (
 	"os/exec"
 	"runtime"
 
+	"github.com/jackpal/gateway"
 	"github.com/songgao/water"
 )
+
+type RoutingData struct {
+	DefaultGateway net.IP
+	serverAddress  net.IP
+}
 
 func findPhysicalInterface() (*net.Interface, error) {
 	interfaces, err := net.Interfaces()
@@ -25,16 +31,23 @@ func findPhysicalInterface() (*net.Interface, error) {
 
 	return nil, errors.New("could not find network interface")
 }
-func createTunnelInterfaceClient() (*water.Interface, error) {
+func createTunnelInterfaceClient(ip net.IP) (*water.Interface, error) {
 	ifce, err := water.New(water.Config{
 		DeviceType: water.TUN,
 	})
+
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
+	defaultGatewayIP, err := gateway.DiscoverGateway()
+	if err != nil {
+		fmt.Printf("Failed to retrieve default gateway: %v\n", err)
+		panic(err)
+	}
+	fmt.Println(defaultGatewayIP)
 	switch runtime.GOOS {
 	case "linux":
-		cmd := exec.Command("sudo", "ip", "addr", "add", "10.0.0.10/24", "dev", ifce.Name())
+		cmd := exec.Command("sudo", "ip", "addr", "add", ip.String(), "dev", ifce.Name())
 		err = cmd.Run()
 		if err != nil {
 			log.Fatalf("Failed to configure tun interface: %v", err)
@@ -55,7 +68,7 @@ func createTunnelInterfaceClient() (*water.Interface, error) {
 	case "darwin":
 
 		// Configure the interface with an IP address and netmask
-		cmd := exec.Command("sudo", "ifconfig", ifce.Name(), "inet", "10.0.10.10", "10.0.10.1", "netmask", "255.255.255.0")
+		cmd := exec.Command("sudo", "ifconfig", ifce.Name(), "inet", ip.String(), "10.0.10.1", "netmask", "255.255.255.0")
 		err = cmd.Run()
 		if err != nil {
 			log.Fatal(err)
@@ -68,25 +81,17 @@ func createTunnelInterfaceClient() (*water.Interface, error) {
 			log.Fatal(err)
 			return nil, err
 		}
+		cmd = exec.Command("sudo", "route", "change", "default", "-interface", ifce.Name())
+		err = cmd.Run()
 
-		// cmd = exec.Command("sudo", "route", "-n", "add", "-net", "0/1", "10.0.10.2")
-		// err = cmd.Run()
-		// if err != nil {
-		// 	log.Fatal(err)
-		// 	return nil, err
-		// }
-		// physicalInterface, err := findPhysicalInterface()
-		// if err != nil {
-		// 	log.Fatal(err)
-		// 	return nil, err
-		// }
-		// cmd = exec.Command("sudo", "route", "-n", "add", "-net", "10.0.10.2", "-interface", physicalInterface.Name)
-		// err = cmd.Run()
-		// if err != nil {
-		// 	log.Fatal(err)
-		// 	return nil, err
-		// }
-
+		CleanUpFunctions = append(CleanUpFunctions, func() {
+			cmd = exec.Command("sudo", "route", "change", "default", defaultGatewayIP.String())
+			err = cmd.Run()
+		})
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
 		return ifce, nil
 	case "windows":
 		return nil, nil
@@ -103,11 +108,23 @@ func createTunnelInterfaceServer() (*water.Interface, error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	cmd := exec.Command("sudo", "ip", "addr", "add", "10.0.10.1/24", "dev", ifce.Name())
+	cmd := exec.Command("sudo", "sysctl", "-w", "net.ipv4.ip_forward=1")
+	err = cmd.Run()
+	if err != nil {
+		log.Fatalf("Failed to enable IP forwarding: %v", err)
+		return nil, err
+	}
+	cmd = exec.Command("sudo", "ip", "addr", "add", "10.0.10.1/24", "dev", ifce.Name())
 	err = cmd.Run()
 	if err != nil {
 		log.Fatalf("Failed to configure network interface: %v", err)
+		return nil, err
+	}
+	// Bring up the tunnel
+	cmd = exec.Command("sudo", "ip", "link", "set", "dev", ifce.Name(), "up")
+	err = cmd.Run()
+	if err != nil {
+		log.Fatalf("Failed to bring up the network interface: %v", err)
 		return nil, err
 	}
 	cmd = exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE")
