@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/songgao/water"
 )
 
 var CleanUpFunctions CleanUpFuncs
@@ -68,8 +70,26 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 	if err != nil {
 		log.Panicln(err)
 	}
+	go handleSendPackets(ifce, key, conn)
+	go handleReceivePackets(key, conn)
+	for {
+	}
+}
+func handleReceivePackets(key []byte, conn net.Conn) {
 	packetBuf := make([]byte, 1500)
 
+	for {
+		n, err := conn.Read(packetBuf)
+		decrypted, err := decrypt(key, packetBuf[:n])
+		if err != nil {
+			fmt.Println("Failed to decrypt the packet:", err)
+			return
+		}
+		fmt.Println("received", decrypted)
+	}
+}
+func handleSendPackets(ifce *water.Interface, key []byte, conn net.Conn) {
+	packetBuf := make([]byte, 1500)
 	for {
 		n, err := ifce.Read(packetBuf)
 		encrypted, err := encrypt(key, packetBuf[:n])
@@ -77,14 +97,12 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 			fmt.Println("Failed to encrypt the packet:", err)
 			return
 		}
-
 		_, err = conn.Write(encrypted)
 		if err != nil {
 			fmt.Println("Error sending packet to server:", err)
 			return
 		}
 	}
-
 }
 
 // CreatePingPacket creates an ICMP ping packet with a given identifier and sequence number

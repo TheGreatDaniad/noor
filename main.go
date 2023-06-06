@@ -34,7 +34,7 @@ func main() {
 
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
-
+	defer cleanup(CleanUpFunctions)
 	go func() {
 		sig := <-signalCh
 		log.Printf("Received signal: %v", sig)

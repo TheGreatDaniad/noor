@@ -68,3 +68,21 @@ func AddToIP(ipStr string, addition uint32) (net.IP, error) {
 
 	return newIP, nil
 }
+
+func IPToID(ip net.IP, baseIP net.IP) (uint16, error) {
+	ip = ip.To4()
+	baseIP = baseIP.To4()
+	if ip == nil || baseIP == nil {
+		return 0, fmt.Errorf("invalid IP address")
+	}
+	ip1Int := binary.BigEndian.Uint32(ip)
+	baseIPInt := binary.BigEndian.Uint32(baseIP)
+
+	// Perform subtraction
+	diff := ip1Int - baseIPInt
+
+	// Convert difference to uint16
+	diffUint16 := uint16(diff)
+
+	return diffUint16, nil
+}

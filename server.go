@@ -287,7 +287,6 @@ func handleServerIncomingResponses(server Server) {
 
 	for {
 		n, err := server.TunnelInterface.Read(buffer)
-		fmt.Println(buffer[:n])
 		if err != nil {
 			if err == io.EOF {
 				continue // Ignore EOF errors and keep reading
@@ -306,9 +305,15 @@ func routeServerIncomingResponses(server Server, packet []byte) {
 	if err != nil {
 		return
 	}
-	fmt.Printf("%+v", ipHeader)
 	subnet := net.IPNet{IP: net.ParseIP("10.0.10.0"), Mask: net.CIDRMask(24, 32)}
 	if subnet.Contains(ipHeader.Dst) {
+		id, err := IPToID(ipHeader.Dst, server.BaseLocalIP)
+		if err != nil {
+			return
+		}
+		conn := *server.Sessions[id].Conn
+		encrypted, err := encrypt(server.Sessions[id].SharedKey, packet)
+		conn.Write(encrypted)
 	} else {
 		return
 	}
