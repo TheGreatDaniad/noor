@@ -52,7 +52,7 @@ func runClient(host string, port string, userIDStr string, password string) {
 
 func connectToServer(address string, port string, userID [2]byte, password string) {
 
-	conn, err := net.Dial("udp", address+":"+port)
+	conn, err := net.Dial("tcp", address+":"+port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to connect to server: %s\n", err.Error())
 		os.Exit(1)
