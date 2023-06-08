@@ -44,6 +44,7 @@ func runServer() {
 		fmt.Println("Error listening:", err)
 		return
 	}
+
 	defer listener.Close()
 	fmt.Println("listening at port:", config.Port)
 	ifce, err := createTunnelInterfaceServer()
@@ -61,11 +62,11 @@ func runServer() {
 	for {
 
 		conn, err := listener.Accept()
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second)) // set default timeout to 30 seconds
 		if err != nil {
 			fmt.Println("Error accepting connection:", err)
 			continue
 		}
+
 		go handleTCPConnection(conn, server)
 	}
 
@@ -73,7 +74,7 @@ func runServer() {
 
 func handleTCPConnection(conn net.Conn, server Server) {
 	// Read data from client
-	buffer := make([]byte, 1500)
+	buffer := make([]byte, BUFFER_SIZE)
 	n, err := conn.Read(buffer)
 	if err != nil {
 		fmt.Println("Error reading data:", err)
@@ -89,16 +90,16 @@ func handleTCPConnection(conn net.Conn, server Server) {
 	session := server.Sessions[sessionID]
 	conn.Write(session.LocalIp)
 	log.Printf("%v: Connection established with the following session info %+v ", time.Now(), session)
-	buf := make([]byte, 1500)
+	buf := make([]byte, BUFFER_SIZE)
 
 	for {
-		n, _ := conn.Read(buf)
-		pkt, err := decrypt(session.SharedKey, buf[:n])
 
-		if err != nil {
-			continue
-		}
-		server.TunnelInterface.Write(pkt)
+		n, _ := conn.Read(buf)
+		// pkt, err := decrypt(session.SharedKey, buf[:n])
+		// if err != nil {
+		// 	continue
+		// }
+		go server.TunnelInterface.Write(buf[:n])
 	}
 }
 
@@ -283,7 +284,7 @@ func findGlobalIP() (net.IP, error) {
 
 // handles the reponses from internet that comes to the tunnel interface of the server
 func handleServerIncomingResponses(server Server) {
-	buffer := make([]byte, 1500)
+	buffer := make([]byte, BUFFER_SIZE)
 
 	for {
 		n, err := server.TunnelInterface.Read(buffer)
@@ -311,9 +312,15 @@ func routeServerIncomingResponses(server Server, packet []byte) {
 		if err != nil {
 			return
 		}
-		conn := *server.Sessions[id].Conn
-		encrypted, err := encrypt(server.Sessions[id].SharedKey, packet)
-		conn.Write(encrypted)
+		var conn net.Conn
+		_, ok := server.Sessions[id]
+		if ok {
+			conn = *server.Sessions[id].Conn
+			conn.Write(packet)
+		}
+
+		// encrypted, err := encrypt(server.Sessions[id].SharedKey, packet)
+
 	} else {
 		return
 	}

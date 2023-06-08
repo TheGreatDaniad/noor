@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/songgao/water"
+	"golang.org/x/net/ipv4"
 )
 
 var CleanUpFunctions CleanUpFuncs
@@ -51,7 +52,7 @@ func runClient(host string, port string, userIDStr string, password string) {
 
 func connectToServer(address string, port string, userID [2]byte, password string) {
 
-	conn, err := net.Dial("tcp", address+":"+port)
+	conn, err := net.Dial("udp", address+":"+port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to connect to server: %s\n", err.Error())
 		os.Exit(1)
@@ -64,44 +65,68 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 		conn.Close()
 		return
 	}
-	//sudo route delete -host 10.0.10.2 -iface lo0
-	//sudo route delete default -interface utun3
+
 	ifce, err := createTunnelInterfaceClient(ip)
 	if err != nil {
 		log.Panicln(err)
 	}
 	go handleSendPackets(ifce, key, conn)
-	go handleReceivePackets(key, conn)
+	go handleReceivePackets(ifce, key, conn)
 	for {
 	}
 }
-func handleReceivePackets(key []byte, conn net.Conn) {
-	packetBuf := make([]byte, 1500)
+func handleReceivePackets(ifce *water.Interface, key []byte, conn net.Conn) {
+
+	packetBuf := make([]byte, BUFFER_SIZE)
+	// c, err := net.ListenIP("ip4:tcp", nil)
+	// if err != nil {
+	// 	fmt.Println(err)
+	// }
+	for {
+		n, _ := conn.Read(packetBuf)
+		// decrypted, err := decrypt(key, packetBuf[:n])
+		// if err != nil {
+		// 	fmt.Println("Failed to decrypt the packet:", err)
+		// 	return
+		// }
+
+		ifce.Write(packetBuf[:n])
+
+	}
+}
+
+func handleSendPackets(ifce *water.Interface, key []byte, conn net.Conn) {
+	packetBuf := make([]byte, BUFFER_SIZE)
+	var totalBytes int
 
 	for {
-		n, err := conn.Read(packetBuf)
-		decrypted, err := decrypt(key, packetBuf[:n])
-		if err != nil {
-			fmt.Println("Failed to decrypt the packet:", err)
-			return
+		n, _ := ifce.Read(packetBuf)
+		totalBytes += n
+		fmt.Println(totalBytes/1000)
+		handleBuf := func() {
+			ipHeader, err := ipv4.ParseHeader(packetBuf[:n])
+			if err != nil {
+				return
+			}
+			subnet := net.IPNet{IP: net.ParseIP("10.0.10.0"), Mask: net.CIDRMask(24, 32)}
+			if subnet.Contains(ipHeader.Dst) {
+				fmt.Println("containes")
+				return
+			} else {
+
+				if err != nil {
+					fmt.Println("Failed to encrypt the packet:", err)
+					return
+				}
+				_, err = conn.Write(packetBuf[:n])
+				if err != nil {
+					fmt.Println("Error sending packet to server:", err)
+					return
+				}
+			}
 		}
-		fmt.Println("received", decrypted)
-	}
-}
-func handleSendPackets(ifce *water.Interface, key []byte, conn net.Conn) {
-	packetBuf := make([]byte, 1500)
-	for {
-		n, err := ifce.Read(packetBuf)
-		encrypted, err := encrypt(key, packetBuf[:n])
-		if err != nil {
-			fmt.Println("Failed to encrypt the packet:", err)
-			return
-		}
-		_, err = conn.Write(encrypted)
-		if err != nil {
-			fmt.Println("Error sending packet to server:", err)
-			return
-		}
+		handleBuf()
+
 	}
 }
 

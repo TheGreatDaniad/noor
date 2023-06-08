@@ -15,13 +15,10 @@ import (
 
 // Encrypt encrypts plaintext using AES-256 in CBC mode with a random IV.
 func encrypt(key, plaintext []byte) ([]byte, error) {
-	// Generate a random IV (initialization vector)
 	iv := make([]byte, aes.BlockSize)
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		return nil, err
 	}
-
-	// Create a new AES cipher using the provided key
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -29,15 +26,9 @@ func encrypt(key, plaintext []byte) ([]byte, error) {
 
 	// Pad the plaintext to a multiple of the block size
 	plaintext = pkcs7Pad(plaintext, aes.BlockSize)
-
-	// Create a new CBC mode cipher using the AES cipher and IV
 	mode := cipher.NewCBCEncrypter(block, iv)
-
-	// Encrypt the padded plaintext
 	ciphertext := make([]byte, len(plaintext))
 	mode.CryptBlocks(ciphertext, plaintext)
-
-	// Prepend the IV to the ciphertext
 	ciphertext = append(iv, ciphertext...)
 
 	return ciphertext, nil
@@ -51,7 +42,6 @@ func decrypt(key, ciphertext []byte) ([]byte, error) {
 			
 		}
 	}()
-	// Extract the IV from the ciphertext
 	if len(ciphertext) < aes.BlockSize {
 		return nil, errors.New("ciphertext too short")
 	}
@@ -64,10 +54,7 @@ func decrypt(key, ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Create a new CBC mode cipher using the AES cipher and IV
 	mode := cipher.NewCBCDecrypter(block, iv)
-
-	// Decrypt the ciphertext
 	plaintext := make([]byte, len(ciphertext))
 	mode.CryptBlocks(plaintext, ciphertext)
 

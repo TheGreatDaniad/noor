@@ -18,6 +18,7 @@ require (
 	github.com/google/go-dap v0.6.0 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
+	github.com/hashicorp/yamux v0.1.1 // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/jackpal/gateway v1.0.10 // indirect
 	github.com/konsorten/go-windows-terminal-sequences v1.0.3 // indirect
