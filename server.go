@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -35,11 +36,15 @@ type Server struct {
 
 func runServer() {
 	config := readConfig()
-	ip, err := findGlobalIP()
+	address := fmt.Sprintf(":%v", config.Port)
+	// Resolve the address
+	udpAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
-		panic("cannot find phisical interface ip of the server")
+		fmt.Println("Error resolving address:", err)
+		return
 	}
-	listener, err := net.Listen("tcp", fmt.Sprintf("%v:%v", ip.To4().String(), config.Port))
+
+	listener, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
 		fmt.Println("Error listening:", err)
 		return
@@ -61,32 +66,35 @@ func runServer() {
 	// Accept incoming connections and handle them
 	for {
 
-		conn, err := listener.Accept()
+		n, addr, err := listener.ReadFromUDP(buffer)
 		if err != nil {
 			fmt.Println("Error accepting connection:", err)
 			continue
 		}
 
-		go handleTCPConnection(conn, server)
+		go handleUDPConnection(conn, server)
 	}
 
 }
 
-func handleTCPConnection(conn net.Conn, server Server) {
+func handleUDPConnection(conn net.Conn, server Server) {
 	// Read data from client
 	buffer := make([]byte, BUFFER_SIZE)
-	n, err := conn.Read(buffer)
+	_, err := conn.Read(buffer)
 	if err != nil {
 		fmt.Println("Error reading data:", err)
 		return
 	}
-	data := buffer[:n]
-	sessionID, err := handleHandshakeTCPServer(data, conn, server)
+	// data := buffer[:n]
+	// sessionID, err := handleHandshakeTCPServer(data, conn, server)
+	// if err != nil {
+	// 	conn.Close()
+	// 	return
+	// }
+	sessionID, err := addSession(conn, server, uint16(rand.Intn(65536)), []byte{})
 	if err != nil {
-		conn.Close()
 		return
 	}
-
 	session := server.Sessions[sessionID]
 	conn.Write(session.LocalIp)
 	log.Printf("%v: Connection established with the following session info %+v ", time.Now(), session)

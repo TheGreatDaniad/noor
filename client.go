@@ -58,20 +58,22 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 		os.Exit(1)
 	}
 
-	handshakeMode := uint8(0x00) // hardcoded for now but later make it more sophisticated
-	ip, key, err := handleHandshakeTCPClient(conn, userID, handshakeMode, password)
-	if err != nil {
-		log.Println("handshake failed", err)
-		conn.Close()
-		return
-	}
-
-	ifce, err := createTunnelInterfaceClient(ip)
+	// handshakeMode := uint8(0x00) // hardcoded for now but later make it more sophisticated
+	// ip, key, err := handleHandshakeTCPClient(conn, userID, handshakeMode, password)
+	// if err != nil {
+	// 	log.Println("handshake failed", err)
+	// 	conn.Close()
+	// 	return
+	// }
+	buf := make([]byte, 1500)
+	_, err = conn.Read(buf)
+	fmt.Println(buf, err)
+	// ifce, err := createTunnelInterfaceClient(ip)
 	if err != nil {
 		log.Panicln(err)
 	}
-	go handleSendPackets(ifce, key, conn)
-	go handleReceivePackets(ifce, key, conn)
+	// go handleSendPackets(ifce, key, conn)
+	// go handleReceivePackets(ifce, key, conn)
 	for {
 	}
 }
@@ -102,7 +104,7 @@ func handleSendPackets(ifce *water.Interface, key []byte, conn net.Conn) {
 	for {
 		n, _ := ifce.Read(packetBuf)
 		totalBytes += n
-		fmt.Println(totalBytes/1000)
+		fmt.Println(totalBytes / 1000)
 		handleBuf := func() {
 			ipHeader, err := ipv4.ParseHeader(packetBuf[:n])
 			if err != nil {
