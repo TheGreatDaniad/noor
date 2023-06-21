@@ -3,15 +3,12 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/songgao/water"
 	"github.com/spf13/viper"
@@ -37,7 +34,7 @@ func runServer() {
 	config := readConfig()
 	ip, err := findGlobalIP()
 	if err != nil {
-		panic("cannot find phisical interface ip of the server")
+		panic("cannot find physical interface ip of the server")
 	}
 	listener, err := net.Listen("tcp", fmt.Sprintf("%v:%v", ip.To4().String(), config.Port))
 	if err != nil {
@@ -67,15 +64,15 @@ func runServer() {
 			continue
 		}
 
-		go handleTCPConnection(conn, server)
+		go handleTCPConnection(&conn, server)
 	}
 
 }
 
-func handleTCPConnection(conn net.Conn, server Server) {
+func handleTCPConnection(conn *net.Conn, server Server) {
 	// Read data from client
 	buffer := make([]byte, BUFFER_SIZE)
-	n, err := conn.Read(buffer)
+	n, err := (*conn).Read(buffer)
 	if err != nil {
 		fmt.Println("Error reading data:", err)
 		return
@@ -83,23 +80,42 @@ func handleTCPConnection(conn net.Conn, server Server) {
 	data := buffer[:n]
 	sessionID, err := handleHandshakeTCPServer(data, conn, server)
 	if err != nil {
-		conn.Close()
+		(*conn).Close()
 		return
 	}
-
 	session := server.Sessions[sessionID]
-	conn.Write(session.LocalIp)
+	(*conn).Write(session.LocalIp)
 	log.Printf("%v: Connection established with the following session info %+v ", time.Now(), session)
 	buf := make([]byte, BUFFER_SIZE)
-
+	// var totalBytes float64
+	// i := 0
+	var packets [][]byte
+	var i int
 	for {
-
-		n, _ := conn.Read(buf)
+		n, _ := (*conn).Read(buf)
+		fmt.Println(n)
+		i++
+		fmt.Println("read: ", i)
+		if n == 0 {
+			s := server.Sessions[sessionID]
+			s.RemoveConn(conn)
+			server.Sessions[sessionID] = s
+			break
+		}
+		// if isICMPPacket(buf[:n]) {
+		// 	i += n
+		// }
+		// totalBytes += (float64(n) / 1000)
+		// fmt.Println("client: ", totalBytes)
 		// pkt, err := decrypt(session.SharedKey, buf[:n])
 		// if err != nil {
 		// 	continue
 		// }
-		go server.TunnelInterface.Write(buf[:n])
+		packets = extractIPPackets(buf[:n])
+		for _, p := range packets {
+			server.TunnelInterface.Write(p)
+		}
+
 	}
 }
 
@@ -112,11 +128,8 @@ func readConfig() Config {
 	}
 	// maybe in future use /etc for configs
 	// viper.AddConfigPath("/etc/noor")
-
 	viper.SetConfigFile(CONFIG_FILE_PATH)
-
 	viper.SetConfigType("yaml")
-
 	if err := viper.ReadInConfig(); err != nil {
 		fmt.Printf("Error reading config file: %s\n using default config", err)
 		return config
@@ -136,8 +149,9 @@ func readConfig() Config {
 	return config
 }
 
-func addSession(c net.Conn, server Server, userID uint16, sharedKey []byte) (uint16, error) {
-	remoteAddr := c.RemoteAddr()
+func addSession(c *net.Conn, server Server, userID uint16, sharedKey []byte) (uint16, error) {
+	cc := *c
+	remoteAddr := cc.RemoteAddr()
 	ip, ok := remoteAddr.(*net.TCPAddr)
 	if !ok {
 		return 0, fmt.Errorf("remote address is not a TCP address: %s", remoteAddr)
@@ -147,13 +161,20 @@ func addSession(c net.Conn, server Server, userID uint16, sharedKey []byte) (uin
 	if err != nil {
 		return 0, err
 	}
-	server.Sessions[uint16(len(server.Sessions)+1)] = Session{
-		ID:        uint16(len(server.Sessions) + 1),
-		UserID:    userID,
-		RealIp:    ip.IP,
-		Conn:      &c,
-		SharedKey: sharedKey,
-		LocalIp:   localIP,
+	sessionID, found := server.Sessions.FindUser(userID)
+	if found {
+		s := server.Sessions[sessionID]
+		s.AddConnection(c)
+		server.Sessions[sessionID] = s
+	} else {
+		server.Sessions[uint16(len(server.Sessions)+1)] = Session{
+			ID:          uint16(len(server.Sessions) + 1),
+			UserID:      userID,
+			RealIp:      ip.IP,
+			Connections: []*net.Conn{c},
+			SharedKey:   sharedKey,
+			LocalIp:     localIP,
+		}
 	}
 
 	return uint16(len(server.Sessions)), nil
@@ -218,90 +239,26 @@ func setupServer() {
 	fmt.Println("Server configuration written to config.yaml")
 }
 
-func sendPacketsToInternet(packet []byte, socket int) {
-
-	ipHeader, err := ipv4.ParseHeader(packet)
-	if err != nil {
-		fmt.Println("Failed to parse packet:", err)
-		return
-	}
-	var dst [4]byte
-	copy(dst[:], ipHeader.Dst.To4())
-	sockaddr := syscall.SockaddrInet4{
-		Port: 0,
-		Addr: dst,
-	}
-	_, _, errno := syscall.Syscall6(
-		syscall.SYS_WRITE,
-		uintptr(socket),
-		uintptr(unsafe.Pointer(&packet[0])),
-		uintptr(len(packet)),
-		uintptr(0),
-		uintptr(unsafe.Pointer(&sockaddr)),
-		uintptr(unsafe.Sizeof(sockaddr)),
-	)
-	fmt.Println("sent to the internet: ", ipHeader)
-	println(errno)
-}
-
-func findGlobalIP() (net.IP, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		panic(err)
-	}
-
-	// Iterate over interfaces
-	for _, iface := range ifaces {
-		// Check if interface is up and not a loopback or tunnel interface
-		if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 && iface.Flags&net.FlagPointToPoint == 0 {
-			// Get list of addresses for interface
-			addrs, err := iface.Addrs()
-			if err != nil {
-				panic(err)
-			}
-
-			// Iterate over addresses
-			for _, addr := range addrs {
-				// Check if address is an IPv4 or IPv6 global unicast address
-				var ip net.IP
-				switch v := addr.(type) {
-				case *net.IPNet:
-					ip = v.IP
-				case *net.IPAddr:
-					ip = v.IP
-				}
-				if ip != nil && !ip.IsLoopback() && ip.To4() != nil && ip.IsGlobalUnicast() {
-					fmt.Println("Global IP address:", ip)
-					return ip, nil
-				}
-			}
-		}
-	}
-
-	return net.IP{}, nil
-
-}
-
 // handles the reponses from internet that comes to the tunnel interface of the server
 func handleServerIncomingResponses(server Server) {
+
 	buffer := make([]byte, BUFFER_SIZE)
-
+	// var totalBytes float64
+	i := 0
 	for {
-		n, err := server.TunnelInterface.Read(buffer)
-		if err != nil {
-			if err == io.EOF {
-				continue // Ignore EOF errors and keep reading
-			}
-			log.Print("Failed to read from TUN interface:", err)
+		n, _ := server.TunnelInterface.Read(buffer)
+		if isICMPPacket(buffer[:n]) {
+			i++
 		}
-		packet := buffer[:n]
-		go routeServerIncomingResponses(server, packet)
-
+		// totalBytes += float64(n) / 1000
+		// fmt.Println("internet: ", totalBytes)
+		routeServerIncomingResponses(server, buffer[:n])
 	}
 }
 
-func routeServerIncomingResponses(server Server, packet []byte) {
+var j int
 
+func routeServerIncomingResponses(server Server, packet []byte) {
 	ipHeader, err := ipv4.ParseHeader(packet)
 	if err != nil {
 		return
@@ -312,11 +269,14 @@ func routeServerIncomingResponses(server Server, packet []byte) {
 		if err != nil {
 			return
 		}
+		j++
 		var conn net.Conn
 		_, ok := server.Sessions[id]
 		if ok {
-			conn = *server.Sessions[id].Conn
-			conn.Write(packet)
+			conn = *server.Sessions[id].Connections.RandomPick()
+			n, _ := conn.Write(packet)
+			fmt.Println("wrote: ", j, "bytes: ", n)
+
 		}
 
 		// encrypted, err := encrypt(server.Sessions[id].SharedKey, packet)
@@ -324,4 +284,13 @@ func routeServerIncomingResponses(server Server, packet []byte) {
 	} else {
 		return
 	}
+}
+func isICMPPacket(packet []byte) bool {
+	if len(packet) < 20 {
+		// ICMP header is at least 20 bytes long
+		return false
+	}
+	// Extract the protocol field from the IP header
+	protocol := packet[9]
+	return protocol == 1
 }

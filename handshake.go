@@ -14,7 +14,7 @@ const (
 	// since the password is known by the
 )
 
-type ServerHandshakeModes map[uint8]func(Server, User, net.Conn) (uint16, error)
+type ServerHandshakeModes map[uint8]func(Server, User, *net.Conn) (uint16, error)
 type ClientHandshakeModes map[uint8]func(net.Conn, string) (net.IP, []byte, error)
 
 var serverHandshakeHandlers = ServerHandshakeModes{
@@ -24,13 +24,13 @@ var clientHandshakeHandlers = ClientHandshakeModes{
 	0: simpleHandshakeClient,
 }
 
-func handleHandshakeTCPServer(data []byte, c net.Conn, server Server) (uint16, error) {
+func handleHandshakeTCPServer(data []byte, c *net.Conn, server Server) (uint16, error) {
 	userIDBytes := data[0:2]
 	userID := uint16(userIDBytes[0])<<8 | uint16(userIDBytes[1])
 
 	u, err := findUserById(userID)
 	if err != nil {
-		log.Printf("error on handshake with the user with address:%v\n and packet:%v\nerror:%v", c.RemoteAddr(), data[:3], err)
+		log.Printf("error on handshake with the user with address:%v\n and packet:%v\nerror:%v", (*c).RemoteAddr(), data[:3], err)
 		return 0, err
 	}
 	handshakeByte := uint8(data[2])
@@ -114,12 +114,12 @@ func simpleHandshakeClient(c net.Conn, password string) (net.IP, []byte, error) 
 	return net.IP(ip), sharedKey, nil
 }
 
-func simpleHandshakeServer(server Server, u User, c net.Conn) (uint16, error) {
+func simpleHandshakeServer(server Server, u User, c *net.Conn) (uint16, error) {
 	challenge := generateRandom128BitString()
 	hash := u.Password
-	c.Write([]byte(challenge))
+	(*c).Write([]byte(challenge))
 	challengeResponse := make([]byte, 200)
-	n, err := c.Read([]byte(challengeResponse))
+	n, err := (*c).Read([]byte(challengeResponse))
 
 	if err != nil {
 		return 0, errors.New("error on reading client's response")
@@ -140,10 +140,10 @@ func simpleHandshakeServer(server Server, u User, c net.Conn) (uint16, error) {
 		return 0, err
 	}
 	publicKey := privateKey.PublicKey()
-	c.Write(publicKey.Bytes())
+	(*c).Write(publicKey.Bytes())
 	publicKeyClientBytes := make([]byte, 256)
 
-	b, err := c.Read(publicKeyClientBytes)
+	b, err := (*c).Read(publicKeyClientBytes)
 	if err != nil {
 		return 0, errors.New("error on reading client's response")
 	}

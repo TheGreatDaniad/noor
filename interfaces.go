@@ -31,7 +31,7 @@ func findPhysicalInterface() (*net.Interface, error) {
 
 	return nil, errors.New("could not find network interface")
 }
-func createTunnelInterfaceClient(ip net.IP) (*water.Interface, error) {
+func createTunnelInterfaceClient(ip net.IP, host string) (*water.Interface, error) {
 	ifce, err := water.New(water.Config{
 		DeviceType: water.TUN,
 	})
@@ -81,11 +81,23 @@ func createTunnelInterfaceClient(ip net.IP) (*water.Interface, error) {
 			log.Fatal(err)
 			return nil, err
 		}
-		cmd = exec.Command("sudo", "route", "change", "default", "-interface", ifce.Name())
+		// cmd = exec.Command("sudo", "route", "change", "default", "-interface", ifce.Name())
+		// err = cmd.Run()
+		// if err != nil {
+		// 	log.Fatal(err)
+		// 	return nil, err
+		// }
+		cmd = exec.Command("sudo", "route", "add", host, defaultGatewayIP.String())
 		err = cmd.Run()
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
 
 		CleanUpFunctions = append(CleanUpFunctions, func() {
 			cmd = exec.Command("sudo", "route", "change", "default", defaultGatewayIP.String())
+			err = cmd.Run()
+			cmd = exec.Command("sudo", "route", "delete", host)
 			err = cmd.Run()
 		})
 		if err != nil {
@@ -143,4 +155,42 @@ func createTunnelInterfaceServer() (*water.Interface, error) {
 		log.Fatalf("Failed to set up NAT rule: %v", err)
 	}
 	return ifce, nil
+}
+
+func findGlobalIP() (net.IP, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		panic(err)
+	}
+
+	// Iterate over interfaces
+	for _, iface := range ifaces {
+		// Check if interface is up and not a loopback or tunnel interface
+		if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 && iface.Flags&net.FlagPointToPoint == 0 {
+			// Get list of addresses for interface
+			addrs, err := iface.Addrs()
+			if err != nil {
+				panic(err)
+			}
+
+			// Iterate over addresses
+			for _, addr := range addrs {
+				// Check if address is an IPv4 or IPv6 global unicast address
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip != nil && !ip.IsLoopback() && ip.To4() != nil && ip.IsGlobalUnicast() {
+					fmt.Println("Global IP address:", ip)
+					return ip, nil
+				}
+			}
+		}
+	}
+
+	return net.IP{}, nil
+
 }

@@ -48,6 +48,7 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"net"
+	"sort"
 	"time"
 
 	"golang.org/x/net/ipv4"
@@ -122,7 +123,7 @@ func changePacketSrc(packet []byte, src net.IP) ([]byte, error) {
 		return []byte{}, err
 	}
 	ipHeader.Src = src
-	
+
 	payload := packet[ipHeader.Len:]
 	newHeader, err := ipHeader.Marshal()
 	if err != nil {
@@ -130,4 +131,77 @@ func changePacketSrc(packet []byte, src net.IP) ([]byte, error) {
 	}
 	return append(newHeader, payload...), nil
 
+}
+func extractIPPackets(data []byte) [][]byte {
+	var packets [][]byte
+	if len(data) < 4 {
+		return packets
+	}
+	for len(data) >= 20 {
+
+		packetLength := int(data[2])<<8 + int(data[3])
+		if len(data) < packetLength || packetLength < 20 {
+			return packets
+		}
+		packetData := data[:packetLength]
+		packets = append(packets, packetData)
+
+		// Update the remaining data
+		data = data[packetLength:]
+	}
+
+	return packets
+}
+
+type PacketConstructionList map[uint16]PacketFragments
+
+type PacketFragments struct {
+	Fragments          []Fragment
+	LastInsertedDate   time.Time
+	Completed          bool
+	LastPacketInserted bool
+}
+type Fragment struct {
+	Offset int
+	Data   []byte
+}
+
+func (pf *PacketFragments) AddFragment(f Fragment) {
+	pf.Fragments = append(pf.Fragments, f)
+	pf.LastInsertedDate = time.Now()
+}
+func (pf *PacketFragments) AddLastFragment(f Fragment) {
+	pf.Fragments = append(pf.Fragments, f)
+	pf.LastInsertedDate = time.Now()
+
+}
+func assemblePacket(fragments []Fragment) []byte {
+	// Sort the fragments based on their offset
+	sort.Slice(fragments, func(i, j int) bool {
+		return fragments[i].Offset < fragments[j].Offset
+	})
+
+	// Calculate the total length of the packet
+	totalLength := 0
+	for _, fragment := range fragments {
+		totalLength += len(fragment.Data)
+	}
+
+	// Create a buffer to hold the reassembled packet
+	packet := make([]byte, totalLength)
+
+	// Copy the fragment data into the packet buffer at the correct offset
+	for _, fragment := range fragments {
+		copy(packet[fragment.Offset:], fragment.Data)
+	}
+
+	return packet
+}
+
+func (pfl PacketConstructionList) RemoveOldFragments() {
+	for id, fragments := range pfl {
+		if fragments.LastInsertedDate.Before(time.Now().Add(-10 * time.Second)) {
+			delete(pfl, id)
+		}
+	}
 }

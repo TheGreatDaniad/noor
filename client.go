@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/songgao/water"
-	"golang.org/x/net/ipv4"
 )
 
 var CleanUpFunctions CleanUpFuncs
@@ -47,150 +46,90 @@ func runClient(host string, port string, userIDStr string, password string) {
 		return
 	}
 	userID := [2]byte{byte(n >> 8), byte(n)}
-	connectToServer(host, port, userID, password)
-}
-
-func connectToServer(address string, port string, userID [2]byte, password string) {
-
-	conn, err := net.Dial("tcp", address+":"+port)
+	conns, key, ip, err := connectToServer(host, port, userID, password, 32)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to server: %s\n", err.Error())
-		os.Exit(1)
+		panic(err)
 	}
-
-	handshakeMode := uint8(0x00) // hardcoded for now but later make it more sophisticated
-	ip, key, err := handleHandshakeTCPClient(conn, userID, handshakeMode, password)
-	if err != nil {
-		log.Println("handshake failed", err)
-		conn.Close()
-		return
-	}
-
-	ifce, err := createTunnelInterfaceClient(ip)
+	ifce, err := createTunnelInterfaceClient(ip, host)
 	if err != nil {
 		log.Panicln(err)
 	}
-	go handleSendPackets(ifce, key, conn)
-	go handleReceivePackets(ifce, key, conn)
-	for {
+	bytesReadFromIfce := make(chan []byte, 10000)
+	for _, c := range conns {
+		go handleReceivePackets(ifce, key, *c)
+
 	}
+	handleSendPackets(ifce, key, conns)
+
+}
+
+func connectToServer(address string, port string, userID [2]byte, password string, connectionCount int) ([]*net.Conn, []byte, net.IP, error) {
+	var conns []*net.Conn
+	var ip net.IP
+	var key []byte
+	for i := 0; i < connectionCount; i++ {
+		conn, err := net.Dial("tcp", address+":"+port)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to connect to server: %s\n", err.Error())
+			os.Exit(1)
+		}
+
+		handshakeMode := uint8(0x00) // hardcoded for now but later make it more sophisticated
+		ip, key, err = handleHandshakeTCPClient(conn, userID, handshakeMode, password)
+		if err != nil {
+			log.Println("handshake failed", err)
+			conn.Close()
+			for _, c := range conns {
+				(*c).Close()
+			}
+			return nil, []byte{}, nil, err
+		} else {
+
+			conns = append(conns, &conn)
+		}
+	}
+	return conns, key, ip, nil
+
 }
 func handleReceivePackets(ifce *water.Interface, key []byte, conn net.Conn) {
 
 	packetBuf := make([]byte, BUFFER_SIZE)
-	// c, err := net.ListenIP("ip4:tcp", nil)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// }
+
+	// var totalBytes float64
+	i := 0
+	var packets [][]byte
 	for {
+		i++
 		n, _ := conn.Read(packetBuf)
-		// decrypted, err := decrypt(key, packetBuf[:n])
+		// totalBytes += (float64(n) / 1000)
+		// fmt.Println(totalBytes)
 		// if err != nil {
 		// 	fmt.Println("Failed to decrypt the packet:", err)
 		// 	return
 		// }
+		packets = extractIPPackets(packetBuf[:n])
+		var p []byte
+		for _, p = range packets {
+			ifce.Write(p)
 
-		ifce.Write(packetBuf[:n])
-
-	}
-}
-
-func handleSendPackets(ifce *water.Interface, key []byte, conn net.Conn) {
-	packetBuf := make([]byte, BUFFER_SIZE)
-	var totalBytes int
-
-	for {
-		n, _ := ifce.Read(packetBuf)
-		totalBytes += n
-		fmt.Println(totalBytes/1000)
-		handleBuf := func() {
-			ipHeader, err := ipv4.ParseHeader(packetBuf[:n])
-			if err != nil {
-				return
-			}
-			subnet := net.IPNet{IP: net.ParseIP("10.0.10.0"), Mask: net.CIDRMask(24, 32)}
-			if subnet.Contains(ipHeader.Dst) {
-				fmt.Println("containes")
-				return
-			} else {
-
-				if err != nil {
-					fmt.Println("Failed to encrypt the packet:", err)
-					return
-				}
-				_, err = conn.Write(packetBuf[:n])
-				if err != nil {
-					fmt.Println("Error sending packet to server:", err)
-					return
-				}
-			}
 		}
-		handleBuf()
-
 	}
 }
+func handleCapturePackets()
 
-// CreatePingPacket creates an ICMP ping packet with a given identifier and sequence number
-func CreatePingPacket(identifier, sequenceNum uint16) []byte {
-	// Create the ICMP echo request packet
-	icmpPacket := make([]byte, 8)
+func handleSendPackets(ifce *water.Interface, key []byte, conns ConnectionPool) {
+	packetBuf := make([]byte, BUFFER_SIZE)
+	i := 0
+	var packets [][]byte
+	for {
+		i++
+		n, _ := ifce.Read(packetBuf)
+		packets = extractIPPackets(packetBuf[:n])
+		for _, p := range packets {
 
-	icmpPacket[0] = 8 // Type icmp
-	icmpPacket[1] = 0 // Code
-	icmpPacket[2] = 0 // Checksum (zeroed for now)
-	icmpPacket[3] = 0
-	icmpPacket[4] = byte(identifier >> 8)    // Identifier (high byte)
-	icmpPacket[5] = byte(identifier & 0xff)  // Identifier (low byte)
-	icmpPacket[6] = byte(sequenceNum >> 8)   // Sequence number (high byte)
-	icmpPacket[7] = byte(sequenceNum & 0xff) // Sequence number (low byte)
-
-	checksum := calculateChecksum(icmpPacket)
-	icmpPacket[2] = byte(checksum >> 8)   // Set the checksum (high byte)
-	icmpPacket[3] = byte(checksum & 0xff) // Set the checksum (low byte)
-
-	// Create the IP packet
-	ipPacket := make([]byte, 20+len(icmpPacket))
-
-	ipPacket[0] = 0x45                       // Version and Header Length
-	ipPacket[1] = 0                          // TOS
-	ipPacket[2] = byte(len(ipPacket) >> 8)   // Total Length (high byte)
-	ipPacket[3] = byte(len(ipPacket) & 0xff) // Total Length (low byte)
-	ipPacket[4] = 0                          // Identification (high byte)
-	ipPacket[5] = 0                          // Identification (low byte)
-	ipPacket[6] = 0x40                       // Flags and Fragment Offset
-	ipPacket[7] = 0                          // Fragment Offset
-	ipPacket[8] = 64                         // TTL (Time to Live)
-	ipPacket[9] = 1                          // Protocol (ICMP)
-	ipPacket[10] = 0                         // Checksum (high byte)
-	ipPacket[11] = 0                         // Checksum (low byte)
-	ipPacket[12] = 0                         // Source IP address (zeroed for now)
-	ipPacket[13] = 0
-	ipPacket[14] = 0
-	ipPacket[15] = 0
-	ipPacket[16] = 4 // Destination IP address (4.2.2.4)
-	ipPacket[17] = 2
-	ipPacket[18] = 2
-	ipPacket[19] = 4
-
-	copy(ipPacket[20:], icmpPacket)
-
-	return ipPacket
-}
-func calculateChecksum(data []byte) uint16 {
-	var sum uint32
-
-	for i := 0; i < len(data)-1; i += 2 {
-		sum += uint32(data[i+1])<<8 | uint32(data[i])
+			(*conns.RandomPick()).Write(p)
+		}
 	}
-
-	if len(data)%2 != 0 {
-		sum += uint32(data[len(data)-1])
-	}
-
-	sum = (sum >> 16) + (sum & 0xffff)
-	sum += sum >> 16
-
-	return uint16(^sum)
 }
 
 func cleanup(fns CleanUpFuncs) {
