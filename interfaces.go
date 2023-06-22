@@ -74,19 +74,24 @@ func createTunnelInterfaceClient(ip net.IP, host string) (*water.Interface, erro
 			log.Fatal(err)
 			return nil, err
 		}
-
+		cmd = exec.Command("sudo", "ifconfig", ifce.Name(), "mtu", fmt.Sprint("%v", BUFFER_SIZE))
+		err = cmd.Run()
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
 		cmd = exec.Command("sudo", "sysctl", "-w", "net.inet.ip.forwarding=1")
 		err = cmd.Run()
 		if err != nil {
 			log.Fatal(err)
 			return nil, err
 		}
-		// cmd = exec.Command("sudo", "route", "change", "default", "-interface", ifce.Name())
-		// err = cmd.Run()
-		// if err != nil {
-		// 	log.Fatal(err)
-		// 	return nil, err
-		// }
+		cmd = exec.Command("sudo", "route", "change", "default", "-interface", ifce.Name())
+		err = cmd.Run()
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
 		cmd = exec.Command("sudo", "route", "add", host, defaultGatewayIP.String())
 		err = cmd.Run()
 		if err != nil {
@@ -132,6 +137,13 @@ func createTunnelInterfaceServer() (*water.Interface, error) {
 		log.Fatalf("Failed to configure network interface: %v", err)
 		return nil, err
 	}
+	cmd = exec.Command("sudo", "ifconfig", ifce.Name(), "mtu", fmt.Sprint(BUFFER_SIZE))
+	err = cmd.Run()
+	if err != nil {
+		log.Fatal(err)
+		return nil, err
+	}
+
 	// Bring up the tunnel
 	cmd = exec.Command("sudo", "ip", "link", "set", "dev", ifce.Name(), "up")
 	err = cmd.Run()

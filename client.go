@@ -46,7 +46,7 @@ func runClient(host string, port string, userIDStr string, password string) {
 		return
 	}
 	userID := [2]byte{byte(n >> 8), byte(n)}
-	conns, key, ip, err := connectToServer(host, port, userID, password, 32)
+	conns, key, ip, err := connectToServer(host, port, userID, password, 1)
 	if err != nil {
 		panic(err)
 	}
@@ -54,7 +54,6 @@ func runClient(host string, port string, userIDStr string, password string) {
 	if err != nil {
 		log.Panicln(err)
 	}
-	bytesReadFromIfce := make(chan []byte, 10000)
 	for _, c := range conns {
 		go handleReceivePackets(ifce, key, *c)
 
@@ -97,38 +96,29 @@ func handleReceivePackets(ifce *water.Interface, key []byte, conn net.Conn) {
 
 	// var totalBytes float64
 	i := 0
-	var packets [][]byte
+
 	for {
 		i++
 		n, _ := conn.Read(packetBuf)
-		// totalBytes += (float64(n) / 1000)
-		// fmt.Println(totalBytes)
-		// if err != nil {
-		// 	fmt.Println("Failed to decrypt the packet:", err)
-		// 	return
-		// }
-		packets = extractIPPackets(packetBuf[:n])
-		var p []byte
-		for _, p = range packets {
-			ifce.Write(p)
-
+		if n == 0 {
+			conn.Close()
+			fmt.Println("server closed the tcp connection")
+			break
 		}
+		ifce.Write(packetBuf[:n])
+
 	}
 }
-func handleCapturePackets()
 
 func handleSendPackets(ifce *water.Interface, key []byte, conns ConnectionPool) {
 	packetBuf := make([]byte, BUFFER_SIZE)
 	i := 0
-	var packets [][]byte
 	for {
 		i++
-		n, _ := ifce.Read(packetBuf)
-		packets = extractIPPackets(packetBuf[:n])
-		for _, p := range packets {
+		ifce.Read(packetBuf)
 
-			(*conns.RandomPick()).Write(p)
-		}
+		(*conns.RandomPick()).Write(packetBuf)
+
 	}
 }
 

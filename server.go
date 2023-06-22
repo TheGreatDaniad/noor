@@ -87,34 +87,16 @@ func handleTCPConnection(conn *net.Conn, server Server) {
 	(*conn).Write(session.LocalIp)
 	log.Printf("%v: Connection established with the following session info %+v ", time.Now(), session)
 	buf := make([]byte, BUFFER_SIZE)
-	// var totalBytes float64
-	// i := 0
-	var packets [][]byte
-	var i int
+
 	for {
-		n, _ := (*conn).Read(buf)
-		fmt.Println(n)
-		i++
-		fmt.Println("read: ", i)
+		n, _ = (*conn).Read(buf)
 		if n == 0 {
 			s := server.Sessions[sessionID]
 			s.RemoveConn(conn)
 			server.Sessions[sessionID] = s
 			break
 		}
-		// if isICMPPacket(buf[:n]) {
-		// 	i += n
-		// }
-		// totalBytes += (float64(n) / 1000)
-		// fmt.Println("client: ", totalBytes)
-		// pkt, err := decrypt(session.SharedKey, buf[:n])
-		// if err != nil {
-		// 	continue
-		// }
-		packets = extractIPPackets(buf[:n])
-		for _, p := range packets {
-			server.TunnelInterface.Write(p)
-		}
+		server.TunnelInterface.Write(buf[:n])
 
 	}
 }
@@ -243,16 +225,11 @@ func setupServer() {
 func handleServerIncomingResponses(server Server) {
 
 	buffer := make([]byte, BUFFER_SIZE)
-	// var totalBytes float64
-	i := 0
+
 	for {
-		n, _ := server.TunnelInterface.Read(buffer)
-		if isICMPPacket(buffer[:n]) {
-			i++
-		}
-		// totalBytes += float64(n) / 1000
-		// fmt.Println("internet: ", totalBytes)
-		routeServerIncomingResponses(server, buffer[:n])
+		server.TunnelInterface.Read(buffer)
+
+		routeServerIncomingResponses(server, buffer)
 	}
 }
 
@@ -274,8 +251,7 @@ func routeServerIncomingResponses(server Server, packet []byte) {
 		_, ok := server.Sessions[id]
 		if ok {
 			conn = *server.Sessions[id].Connections.RandomPick()
-			n, _ := conn.Write(packet)
-			fmt.Println("wrote: ", j, "bytes: ", n)
+			conn.Write(packet)
 
 		}
 
@@ -284,13 +260,4 @@ func routeServerIncomingResponses(server Server, packet []byte) {
 	} else {
 		return
 	}
-}
-func isICMPPacket(packet []byte) bool {
-	if len(packet) < 20 {
-		// ICMP header is at least 20 bytes long
-		return false
-	}
-	// Extract the protocol field from the IP header
-	protocol := packet[9]
-	return protocol == 1
 }
