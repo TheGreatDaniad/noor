@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jackpal/gateway"
 	"github.com/songgao/water"
+	wgtun "golang.zx2c4.com/wireguard/tun"
 )
 
 type RoutingData struct {
@@ -17,6 +19,37 @@ type RoutingData struct {
 	serverAddress  net.IP
 }
 
+type Ifce struct {
+	io.ReadWriteCloser
+	Dev wgtun.Device
+}
+
+func (i Ifce) Read(p []byte) (n int, err error) {
+	var bufs [][]byte
+	var final []byte
+	var sizes []int
+
+	// Initialize bufs and sizes with a single element
+	bufs = append(bufs, p)
+	sizes = append(sizes, len(p))
+	// Call the original Read method
+	packetsRead, err := i.Dev.Read(bufs, sizes, 0)
+	// Update the total number of bytes read
+	for _, size := range sizes[:packetsRead] {
+		n += size
+
+	}
+	for _, pckt := range bufs {
+		final = append(final, pckt...)
+	}
+	return n, err
+}
+func (i Ifce) Write(p []byte) (n int, err error) {
+	return i.Dev.Write([][]byte{p}, 0)
+}
+func (i Ifce) Close() (err error) {
+	return i.Dev.Close()
+}
 func findPhysicalInterface() (*net.Interface, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -31,22 +64,23 @@ func findPhysicalInterface() (*net.Interface, error) {
 
 	return nil, errors.New("could not find network interface")
 }
-func createTunnelInterfaceClient(ip net.IP, host string) (*water.Interface, error) {
-	ifce, err := water.New(water.Config{
-		DeviceType: water.TUN,
-	})
+func createTunnelInterfaceClient(ip net.IP, host string) (io.ReadWriteCloser, error) {
 
-	if err != nil {
-		panic(err)
-	}
 	defaultGatewayIP, err := gateway.DiscoverGateway()
 	if err != nil {
 		fmt.Printf("Failed to retrieve default gateway: %v\n", err)
 		panic(err)
 	}
-	fmt.Println(defaultGatewayIP)
+
 	switch runtime.GOOS {
 	case "linux":
+		ifce, err := water.New(water.Config{
+			DeviceType: water.TUN,
+		})
+
+		if err != nil {
+			panic(err)
+		}
 		cmd := exec.Command("sudo", "ip", "addr", "add", ip.String(), "dev", ifce.Name())
 		err = cmd.Run()
 		if err != nil {
@@ -61,20 +95,28 @@ func createTunnelInterfaceClient(ip net.IP, host string) (*water.Interface, erro
 			return nil, err
 		}
 		cmd = exec.Command("ip", "route", "add", "default", "dev", ifce.Name())
-		err := cmd.Run()
+		err = cmd.Run()
 		if err != nil {
 			return nil, err
 		}
 	case "darwin":
+		ifce, err := water.New(water.Config{
+			DeviceType: water.TUN,
+		})
 
+		if err != nil {
+			panic(err)
+		}
+		base := net.IPv4(ip.To4()[0], ip.To4()[0], ip.To4()[0], 1)
+		fmt.Println(base)
 		// Configure the interface with an IP address and netmask
-		cmd := exec.Command("sudo", "ifconfig", ifce.Name(), "inet", ip.String(), "10.0.10.1", "netmask", "255.255.255.0")
+		cmd := exec.Command("sudo", "ifconfig", ifce.Name(), "inet", ip.String(), base.String(), "netmask", "255.255.255.0")
 		err = cmd.Run()
 		if err != nil {
 			log.Fatal(err)
 			return nil, err
 		}
-		cmd = exec.Command("sudo", "ifconfig", ifce.Name(), "mtu", fmt.Sprint("%v", BUFFER_SIZE))
+		cmd = exec.Command("sudo", "ifconfig", ifce.Name(), "mtu", fmt.Sprintf("%v", BUFFER_SIZE))
 		err = cmd.Run()
 		if err != nil {
 			log.Fatal(err)
@@ -111,13 +153,61 @@ func createTunnelInterfaceClient(ip net.IP, host string) (*water.Interface, erro
 		}
 		return ifce, nil
 	case "windows":
-		return nil, nil
+		tun, err := wgtun.CreateTUN("tun", 1500)
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
+		t := Ifce{Dev: tun}
+
+		cmd := exec.Command("netsh", "interface", "ipv4", "set", "address", "name=\"tun\"", "static", ip.String(), "255.255.255.0")
+		fmt.Println(cmd)
+		go func() {
+			cmd.Run()
+			if err != nil {
+				log.Fatal(err)
+
+			}
+		}()
+
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(defaultGatewayIP.String())
+		cmd = exec.Command("route", "add", host, "mask", "255.255.255.255", defaultGatewayIP.String())
+		err = cmd.Run()
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
+		// fmt.Println(defaultGatewayIP.String())
+
+		cmd = exec.Command("route", "change", "0.0.0.0", "mask", "0.0.0.0", ip.String())
+		err = cmd.Run()
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
+		cmd = exec.Command("netsh", "interface", "ipv4", "set", "subinterface", "tun", fmt.Sprintf("mtu=%d", BUFFER_SIZE), "store=persistent")
+		err = cmd.Run()
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
+		CleanUpFunctions = append(CleanUpFunctions, func() {
+			cmd = exec.Command("route", "change", "0.0.0.0", "mask", "0.0.0.0", defaultGatewayIP.String())
+			err = cmd.Run()
+			cmd = exec.Command("route", "delete", host)
+			err = cmd.Run()
+			tun.Close()
+		})
+		return t, nil
 	default:
 		return nil, fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
-	return ifce, nil
+	return nil, errors.New("os not supported")
 }
-func createTunnelInterfaceServer() (*water.Interface, error) {
+func createTunnelInterfaceServer(server Server) (*water.Interface, error) {
 	ifce, err := water.New(water.Config{
 		DeviceType: water.TUN,
 	})
@@ -131,7 +221,8 @@ func createTunnelInterfaceServer() (*water.Interface, error) {
 		log.Fatalf("Failed to enable IP forwarding: %v", err)
 		return nil, err
 	}
-	cmd = exec.Command("sudo", "ip", "addr", "add", "10.0.10.1/24", "dev", ifce.Name())
+	cmd = exec.Command("sudo", "ip", "addr", "add", fmt.Sprintf("%s/24", server.BaseLocalIP), "dev", ifce.Name())
+	fmt.Println(cmd)
 	err = cmd.Run()
 	if err != nil {
 		log.Fatalf("Failed to configure network interface: %v", err)

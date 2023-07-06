@@ -43,27 +43,26 @@ func runServer() {
 	}
 
 	defer listener.Close()
+
+	server := Server{
+		Config:      config,
+		Sessions:    make(Sessions),
+		BaseLocalIP: net.IPv4(10, 0, 10, 1),
+	}
 	fmt.Println("listening at port:", config.Port)
-	ifce, err := createTunnelInterfaceServer()
+	ifce, err := createTunnelInterfaceServer(server)
 	if err != nil {
 		panic(err)
 	}
-	var server Server = Server{
-		Config:          config,
-		Sessions:        make(Sessions),
-		TunnelInterface: ifce,
-		BaseLocalIP:     net.IPv4(10, 0, 10, 1),
-	}
+	server.TunnelInterface = ifce
 	go handleServerIncomingResponses(server)
 	// Accept incoming connections and handle them
 	for {
-
 		conn, err := listener.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection:", err)
 			continue
 		}
-
 		go handleTCPConnection(&conn, server)
 	}
 
@@ -90,13 +89,18 @@ func handleTCPConnection(conn *net.Conn, server Server) {
 
 	for {
 		n, _ = (*conn).Read(buf)
+		packetLength := int(buf[2])<<8 + int(buf[3])
+
 		if n == 0 {
 			s := server.Sessions[sessionID]
 			s.RemoveConn(conn)
 			server.Sessions[sessionID] = s
 			break
 		}
-		server.TunnelInterface.Write(buf[:n])
+		if packetLength > BUFFER_SIZE {
+			continue
+		}
+		server.TunnelInterface.Write(buf[:packetLength])
 
 	}
 }
@@ -138,8 +142,8 @@ func addSession(c *net.Conn, server Server, userID uint16, sharedKey []byte) (ui
 	if !ok {
 		return 0, fmt.Errorf("remote address is not a TCP address: %s", remoteAddr)
 	}
-	count := len(server.Sessions) + 1
-	localIP, err := AddToIP("10.0.10.1", uint32(count))
+	count := len(server.Sessions) + BASE_IP_OFFSET
+	localIP, err := AddToIP(server.BaseLocalIP.String(), uint32(count))
 	if err != nil {
 		return 0, err
 	}
@@ -227,31 +231,30 @@ func handleServerIncomingResponses(server Server) {
 	buffer := make([]byte, BUFFER_SIZE)
 
 	for {
-		server.TunnelInterface.Read(buffer)
-
+		n, _ := server.TunnelInterface.Read(buffer)
+		fmt.Println(n)
 		routeServerIncomingResponses(server, buffer)
 	}
 }
-
-var j int
 
 func routeServerIncomingResponses(server Server, packet []byte) {
 	ipHeader, err := ipv4.ParseHeader(packet)
 	if err != nil {
 		return
 	}
-	subnet := net.IPNet{IP: net.ParseIP("10.0.10.0"), Mask: net.CIDRMask(24, 32)}
+	fmt.Println(ipHeader)
+	subnet := net.IPNet{IP: net.ParseIP(server.BaseLocalIP.String()), Mask: net.CIDRMask(24, 32)}
 	if subnet.Contains(ipHeader.Dst) {
-		id, err := IPToID(ipHeader.Dst, server.BaseLocalIP)
+		id, err := IPToID(ipHeader.Dst, server.BaseLocalIP, 3)
 		if err != nil {
 			return
 		}
-		j++
-		var conn net.Conn
 		_, ok := server.Sessions[id]
 		if ok {
-			conn = *server.Sessions[id].Connections.RandomPick()
-			conn.Write(packet)
+			conn := server.Sessions[id].Connections.RandomPick()
+			if conn != nil {
+				(*conn).Write(packet)
+			}
 
 		}
 

@@ -205,3 +205,8 @@ func (pfl PacketConstructionList) RemoveOldFragments() {
 		}
 	}
 }
+
+func IsIPv4Packet(packet []byte) bool {
+	version := packet[0] >> 4
+	return version == 4
+}

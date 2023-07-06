@@ -3,13 +3,14 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 
-	"github.com/songgao/water"
+	"golang.org/x/net/ipv4"
 )
 
 var CleanUpFunctions CleanUpFuncs
@@ -46,7 +47,7 @@ func runClient(host string, port string, userIDStr string, password string) {
 		return
 	}
 	userID := [2]byte{byte(n >> 8), byte(n)}
-	conns, key, ip, err := connectToServer(host, port, userID, password, 1)
+	conns, key, ip, err := connectToServer(host, port, userID, password, 4)
 	if err != nil {
 		panic(err)
 	}
@@ -90,34 +91,51 @@ func connectToServer(address string, port string, userID [2]byte, password strin
 	return conns, key, ip, nil
 
 }
-func handleReceivePackets(ifce *water.Interface, key []byte, conn net.Conn) {
+func handleReceivePackets(ifce io.ReadWriteCloser, key []byte, conn net.Conn) {
 
 	packetBuf := make([]byte, BUFFER_SIZE)
 
 	// var totalBytes float64
 	i := 0
-
 	for {
+
 		i++
 		n, _ := conn.Read(packetBuf)
+		packetLength := int(packetBuf[2])<<8 + int(packetBuf[3])
+
+		fmt.Println("read ", n, " bytes from server. Packet length", packetLength)
+
 		if n == 0 {
 			conn.Close()
 			fmt.Println("server closed the tcp connection")
 			break
 		}
-		ifce.Write(packetBuf[:n])
-
+		if packetLength > BUFFER_SIZE {
+			continue
+		}
+		ifce.Write(packetBuf[:packetLength])
 	}
 }
 
-func handleSendPackets(ifce *water.Interface, key []byte, conns ConnectionPool) {
-	packetBuf := make([]byte, BUFFER_SIZE)
-	i := 0
-	for {
-		i++
-		ifce.Read(packetBuf)
+func handleSendPackets(ifce io.ReadWriteCloser, key []byte, conns ConnectionPool) {
 
-		(*conns.RandomPick()).Write(packetBuf)
+	buffer := make([]byte, BUFFER_SIZE)
+
+	for {
+
+		n, err := ifce.Read([]byte(buffer))
+		if err != nil {
+			log.Fatal(err)
+		}
+		packetLength := int(buffer[2])<<8 + int(buffer[3])
+
+		fmt.Println("read ", n, " bytes from client. Packet length", packetLength)
+
+		h, err := ipv4.ParseHeader(buffer[:n])
+		fmt.Println(h, err)
+		if int(buffer[0]>>4) == 4 {
+			(*conns.RandomPick()).Write(buffer)
+		}
 
 	}
 }
